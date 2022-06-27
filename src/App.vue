@@ -1,7 +1,8 @@
 <template>
   <div class="container mx-auto flex flex-col items-center bg-gray-100 p-4">
-    <!-- <div
+    <div
       class="fixed w-100 h-100 opacity-80 bg-purple-800 inset-0 z-50 flex items-center justify-center"
+      v-if="coinList === null"
     >
       <svg
         class="animate-spin -ml-1 mr-3 h-12 w-12 text-white"
@@ -23,7 +24,7 @@
           d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
         ></path>
       </svg>
-    </div> -->
+    </div>
     <div class="container">
       <section>
         <div class="flex">
@@ -34,7 +35,8 @@
             <div class="mt-1 relative rounded-md shadow-md">
               <input
                 v-model="ticker"
-                v-on:keydown.enter="add"
+                @keydown.enter="add"
+                @input="(duplicateError = false), showHints()"
                 type="text"
                 name="wallet"
                 id="wallet"
@@ -43,30 +45,21 @@
               />
             </div>
             <div
+              v-if="hints.length"
               class="flex bg-white shadow-md p-1 rounded-md shadow-md flex-wrap"
             >
               <span
+                v-for="hint in hints"
+                @click="(ticker = hint), add(), showHints()"
+                :key="hint"
                 class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
               >
-                BTC
-              </span>
-              <span
-                class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
-              >
-                DOGE
-              </span>
-              <span
-                class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
-              >
-                BCH
-              </span>
-              <span
-                class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
-              >
-                CHD
+                {{ hint }}
               </span>
             </div>
-            <div class="text-sm text-red-600">Такой тикер уже добавлен</div>
+            <div v-show="duplicateError" class="text-sm text-red-600">
+              Такой тикер уже добавлен
+            </div>
           </div>
         </div>
         <button
@@ -184,27 +177,57 @@ export default {
       tickers: [],
       sel: null,
       graph: [],
+      coinList: null,
+      hints: [],
+      duplicateError: false,
     };
   },
+  async created() {
+    const tickersData = localStorage.getItem("cryptonomicon-list");
+    if (tickersData) {
+      this.tickers = JSON.parse(tickersData);
+      this.tickers.forEach((ticker) => {
+        this.subscribeToUpdates(ticker.name);
+      });
+    }
+    const data = await fetch(
+      `https://min-api.cryptocompare.com/data/all/coinlist?summary=true`
+    );
+    const coinlist = await data.json();
+    this.coinList = coinlist.Data;
+  },
   methods: {
-    add() {
-      const currentTicker = {
-        name: this.ticker,
-        price: "-",
-      };
-      this.tickers.push(currentTicker);
+    subscribeToUpdates(tickerName) {
       setInterval(async () => {
         const f = await fetch(
-          `https://min-api.cryptocompare.com/data/price?fsym=${currentTicker.name}&tsyms=USD&api_key=cd5b86bccf5299f9fda2de5f829a8e4ab09ec811c2a5691b49893c1009474f90`
+          `https://min-api.cryptocompare.com/data/price?fsym=${tickerName}&tsyms=USD&api_key=cd5b86bccf5299f9fda2de5f829a8e4ab09ec811c2a5691b49893c1009474f90`
         );
         const data = await f.json();
-        this.tickers.find((t) => t.name == currentTicker.name).price =
+        this.tickers.find((t) => t.name == tickerName).price =
           data.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2);
-        if (this.sel?.name === currentTicker.name) {
+        if (this.sel?.name === tickerName) {
           this.graph.push(data.USD);
         }
       }, 3000);
       this.ticker = "";
+    },
+    add() {
+      if (this.checkExistentTicker(this.ticker)) {
+        this.duplicateError = true;
+      } else {
+        this.duplicateError = false;
+        const currentTicker = {
+          name: this.ticker,
+          price: "-",
+        };
+        this.tickers.push(currentTicker);
+        localStorage.setItem(
+          "cryptonomicon-list",
+          JSON.stringify(this.tickers)
+        );
+        this.subscribeToUpdates(currentTicker.name);
+        this.hints = [];
+      }
     },
     handleDelete(tickerToRemove) {
       this.tickers = this.tickers.filter((ticker) => ticker != tickerToRemove);
@@ -224,9 +247,33 @@ export default {
         (price) => 5 + ((price - minValue) * 95) / (maxValue - minValue)
       );
     },
+    checkExistentTicker(tickerToCheck) {
+      for (const ticker of this.tickers) {
+        if (ticker.name.toLowerCase() === tickerToCheck.toLowerCase()) {
+          return true;
+        }
+      }
+      return false;
+    },
     select(ticker) {
       this.sel = ticker;
       this.graph = [];
+    },
+    showHints() {
+      this.hints = [];
+      if (this.ticker) {
+        /* eslint-disable no-useless-escape */
+        const re = RegExp(this.ticker, "i");
+        for (let coin in this.coinList) {
+          const coinItem = this.coinList[coin];
+          if (~coinItem.FullName.search(re)) {
+            this.hints.push(coinItem.Symbol);
+          }
+          if (this.hints.length > 3) {
+            break;
+          }
+        }
+      }
     },
   },
 };
